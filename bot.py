@@ -70,3 +70,21 @@ input_sequences = pad_sequences(input_sequences, maxlen=max_seq_length, padding=
 target_sequences = pad_sequences(target_sequences, maxlen=max_seq_length, padding='post')
 
 vocab_size = len(tokenizer.word_index) + 1
+
+# Definition of the encoder
+encodoer_inputs = Input(shape=(max_seq_length,))
+encoder_embedding = Embedding(vocab_size, 256)(encodoer_inputs)
+encoder_lstm, state_h, state_c, = LSTM(256, return_state=True)(encoder_embedding)
+encoder_states = [state_h,state_c]
+
+# Definition of the decoder
+decoder_inputs = Input(shape=(max_seq_length,))
+decoder_embedding = Embedding(vocab_size, 256)(decoder_inputs)
+decoder_lstm = LSTM(256, return_sequences=True, return_state=False)
+decoder_outputs = decoder_lstm(decoder_embedding, initial_state=encoder_states)
+decoder_dense = Dense(vocab_size, activation='softmax')
+decoder_outputs = decoder_dense(decoder_outputs)
+
+model = Model([encodoer_inputs, decoder_inputs], decoder_outputs)
+model.compile(optimizer='adam',loss='sparse_categorical_crossentropy')
+model.summary()

@@ -13,7 +13,7 @@ print(f'Using Tensorflow version: {tf.__version__}')
 
 # Parameters
 data_fraction = 0.1 # Fraction of the data to use. Set to 1 to use all the data (will result in longer training times)
-max_tok_lenght = 100 # Max lenght for a sequence
+max_tok_lenght = 100 # Max lenght for a sequence (Increasing to a high amount will use more of you computer resources. Change with caution!)
 embedding_filters = 50 # Number of filters for the embedding layer
 lstm_filters = 50 # Number of filters for the lstm layer
 bsize = 64 # Size for the batch of data to feed the model
@@ -25,7 +25,7 @@ train_model = True # For either training a new model or using an already trained
 path_to_dialogs =Path("./Dialogs")
 path_to_lines = path_to_dialogs / "movie_lines.txt"
 path_to_conversations = path_to_dialogs / "movie_conversations.txt"
-save_path = Path("./pretrained-models")
+save_path = Path("./pretrained-models/model.keras")
 
 # Check path
 print(path_to_dialogs)
@@ -83,11 +83,6 @@ random.shuffle(pairs)
 input_texts = [pair[0] for pair in pairs]
 output_texts = [pair[1] for pair in pairs]
 
-'''max_tok_lenght = input_texts + output_texts
-max_tok_lenght = sorted(max_tok_lenght, key=len)
-max_tok_lenght = len(max_tok_lenght[-1])'''
-
-
 # Tokenizes inputs and outputs
 tokenizer = Tokenizer(num_words=None,filters='',oov_token='<OOV>')
 tokenizer.fit_on_texts(input_texts + output_texts)
@@ -96,16 +91,20 @@ tokenized_outputs = tokenizer.texts_to_sequences(output_texts)
 tokenized_tdata = tokenizer.texts_to_sequences(output_texts)
 tokenized_tdata = [pair[1:] for pair in tokenized_outputs]
 
-
 # Adds padding to target max sequence
 tokenized_inputs = pad_sequences(tokenized_inputs, maxlen=max_tok_lenght, padding='post', truncating='post')
 tokenized_outputs = pad_sequences(tokenized_outputs, maxlen=max_tok_lenght, padding='post', truncating='post')
 tokenized_tdata = pad_sequences(tokenized_tdata, maxlen=max_tok_lenght, padding='post', truncating='post')
 
-print(f'Shape of input: {tokenized_inputs.shape}')
-print(f'Shape of output: {tokenized_outputs.shape}')
-print(f'Shape of tdata: {tokenized_tdata.shape}')
-
+# Splits the data into training and validation
+# Training data
+tokenized_tinputs = tokenized_inputs[:int(len(tokenized_inputs) * 0.8)]
+tokenized_toutputs = tokenized_outputs[:int(len(tokenized_outputs) * 0.8)]
+tokenized_ttdata = tokenized_tdata[:int(len(tokenized_tdata) * 0.8)]
+# Validation data
+tokenized_vinputs = tokenized_inputs[int(len(tokenized_inputs) * 0.8):]
+tokenized_voutputs = tokenized_outputs[int(len(tokenized_outputs) *0.8):]
+tokenized_vtdata = tokenized_tdata[int(len(tokenized_tdata) * 0.8):]
 
 # For testing
 '''detoken_inputs = tokenizer.sequences_to_texts(tokenized_inputs)
@@ -144,10 +143,14 @@ if train_model:
     print('|You are about to train a new model!.|')
     print('--------------------------------------')
     model.fit(
-    x=[tokenized_inputs,tokenized_outputs],
-    y=tokenized_tdata,
+    x=[tokenized_tinputs,tokenized_toutputs],
+    y=tokenized_ttdata,
     batch_size = bsize,
-    epochs = epochs
+    epochs = epochs,
+    validation_data=(
+        [tokenized_vinputs,tokenized_voutputs],
+        tokenized_vtdata
+    )
 )
     model.save(save_path)
     print('Your model has been saved to:')

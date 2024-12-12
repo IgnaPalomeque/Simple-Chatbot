@@ -1,129 +1,159 @@
-import numpy as np
-import pandas as pd
 import re
-import tensorflow as tf
 import random
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.layers import Input, LSTM, Embedding, Dense
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import Embedding, LSTM, Dense, Input, GRU
-from tensorflow.keras.models import Model
+from tensorflow.keras.utils import to_categorical
 from pathlib import Path
 
-# Model parameters
-pairs_fraction = 0.10 # 1 to use 100% of the data
-tokenizer_words = 25000 # Maximum number of unique words
-max_seq_length = 50 # Maximum length for a sequence
-embedding_filters = 128 # Amount of filters for the embedding layer
-lstm_filters = 128 # Amount of filters for the lstm layer
-model_batch_size = 16 # Batch size to feed the model
-model_epochs = 10 # Amount of epochs
-train_model = False # Set to true to train a new model. By default uses one already trained 
+print(f'Using Tensorflow version: {tf.__version__}')
 
-ROOT_DIR = Path(__file__).parent
+# Parameters
+data_fraction = 0.1 # Fraction of the data to use. Set to 1 to use all the data (will result in longer training times)
+max_tok_lenght = 100 # Max lenght for a sequence
+embedding_filters = 50 # Number of filters for the embedding layer
+lstm_filters = 50 # Number of filters for the lstm layer
+bsize = 64 # Size for the batch of data to feed the model
+epochs = 10 # Number of epochs
+train_model = True # For either training a new model or using an already trained one
 
-# Specifying path to text files
-lines_path = ROOT_DIR / "Dialogs/movie_lines.txt"
-conv_path = ROOT_DIR / "Dialogs/movie_conversations.txt"
 
-# Loads the lines file and returns a dictionary for each line
+# Path to files
+path_to_dialogs =Path("./Dialogs")
+path_to_lines = path_to_dialogs / "movie_lines.txt"
+path_to_conversations = path_to_dialogs / "movie_conversations.txt"
+save_path = Path("./pretrained-models")
+
+# Check path
+print(path_to_dialogs)
+print(path_to_lines)
+print(path_to_conversations)
+
+# Creates a dictionary line_id:line
 def load_lines(path):
     lines = {}
-    with open(path, 'r',encoding='utf-8',errors='ignore') as file:
+    with open(path, 'r', encoding='utf-8', errors='ignore') as file:
         for line in file:
-            parts = line.strip().split(" +++$+++ ")
-            if len(parts) > 4:
-                lines[parts[0]] = parts[4]
+            part = line.strip().split(' +++$+++ ')
+            if len(part) > 4:
+                lines[part[0]] = part[4]
     return lines
 
-# Loads the conversations files and return an array for the conversations
+# Creates an array with the connected movie lines
 def load_conversations(path, lines):
     conversations = []
-    with open(path, 'r',encoding='utf-8',errors='ignore') as file:
-        for line in file:
-            parts = line.strip().split(" +++$+++ ")
-            conv_ids = eval(parts[-1])
+    with open(path, 'r', encoding='utf-8', errors='ignore') as file:
+        for conv in file:
+            part = conv.strip().split(' +++$+++ ')
+            conv_ids = eval(part[-1])
             conversations.append([lines[cid] for cid in conv_ids if cid in lines])
     return conversations
 
-lines = load_lines(lines_path)
-conversations = load_conversations(conv_path, lines)
+lines = load_lines(path_to_lines)
+conversations = load_conversations(path_to_conversations, lines)
 
-# Creates an array to store each questions and its response
+# Creates an array with the input_text and output_text
 pairs = []
 for conv in conversations:
-    for i in range(len(conv) - 1):
+    for i in range(0, len(conv) - 1, 2):
         input_text = conv[i]
-        target_text = conv[i + 1]
-        pairs.append((input_text, target_text))
+        output_text = conv[i + 1]
+        pairs.append((input_text, output_text))
 
-# Clean text given
+# Cleans text given
 def clean_text(text):
     text = text.lower()
     text = re.sub(r"[^a-zA-Z?.!,]+", " ", text)
     text = re.sub(r"[.]+", ".", text)
     return text
 
-sampled_pairs = random.sample(pairs, int(len(pairs) * pairs_fraction))
+# Changes the amount of total data to use
+pairs = pairs[:int(len(pairs) * data_fraction)]
 
-# Sets different arrays for questions and answers and cleans them
-input_texts = [clean_text(pair[0]) for pair in sampled_pairs]
-target_texts = ["<start> " + clean_text(pair[1]) + " <end>" for pair in sampled_pairs]
+# Cleans input and output texts
+input_texts = [clean_text(pair[0]) for pair in pairs]
+output_texts = ["<start> " + clean_text(pair[1]) + " <end>" for pair in pairs]
 
-# Creates a dicctionary of word with its own number
-tokenizer = Tokenizer(num_words=tokenizer_words,filters='')
-tokenizer.fit_on_texts(input_texts + target_texts)
+pairs = list(zip(input_texts,output_texts))
+random.shuffle(pairs)
 
-# Replaces each word with the predefined number
-input_sequences = tokenizer.texts_to_sequences(input_texts)
-target_sequences = tokenizer.texts_to_sequences(target_texts)
+input_texts = [pair[0] for pair in pairs]
+output_texts = [pair[1] for pair in pairs]
 
-# Adds padding to target the max sequence length
+'''max_tok_lenght = input_texts + output_texts
+max_tok_lenght = sorted(max_tok_lenght, key=len)
+max_tok_lenght = len(max_tok_lenght[-1])'''
 
-#max_seq_length = max([len(seq) for seq in input_sequences + target_sequences])//2
 
-input_sequences = pad_sequences(input_sequences, maxlen=max_seq_length, padding='post')
-target_sequences = pad_sequences(target_sequences, maxlen=max_seq_length, padding='post')
+# Tokenizes inputs and outputs
+tokenizer = Tokenizer(num_words=None,filters='',oov_token='<OOV>')
+tokenizer.fit_on_texts(input_texts + output_texts)
+tokenized_inputs = tokenizer.texts_to_sequences(input_texts)
+tokenized_outputs = tokenizer.texts_to_sequences(output_texts)
+tokenized_tdata = tokenizer.texts_to_sequences(output_texts)
+tokenized_tdata = [pair[1:] for pair in tokenized_outputs]
+
+
+# Adds padding to target max sequence
+tokenized_inputs = pad_sequences(tokenized_inputs, maxlen=max_tok_lenght, padding='post', truncating='post')
+tokenized_outputs = pad_sequences(tokenized_outputs, maxlen=max_tok_lenght, padding='post', truncating='post')
+tokenized_tdata = pad_sequences(tokenized_tdata, maxlen=max_tok_lenght, padding='post', truncating='post')
+
+print(f'Shape of input: {tokenized_inputs.shape}')
+print(f'Shape of output: {tokenized_outputs.shape}')
+print(f'Shape of tdata: {tokenized_tdata.shape}')
+
+
+# For testing
+'''detoken_inputs = tokenizer.sequences_to_texts(tokenized_inputs)
+detoken_outputs = tokenizer.sequences_to_texts(tokenized_outputs)
+detoken_tdata = tokenizer.sequences_to_texts(tokenized_tdata)'''
 
 vocab_size = len(tokenizer.word_index) + 1
 
 # Definition of the encoder
-encodoer_inputs = Input(shape=(max_seq_length,))
-encoder_embedding = Embedding(vocab_size, embedding_filters)(encodoer_inputs)
-encoder_gru, state_h, state_c = LSTM(lstm_filters, return_state=True)(encoder_embedding)
+encoder_inputs = Input(shape=(None,))
+encoder_embedding = Embedding(vocab_size, embedding_filters)(encoder_inputs)
+encoder_lstm = LSTM(lstm_filters, return_state=True)
+encoder_outputs, state_h, state_c = encoder_lstm(encoder_embedding)
 encoder_states = [state_h, state_c]
 
 # Definition of the decoder
-decoder_inputs = Input(shape=(max_seq_length,))
-decoder_embedding = Embedding(vocab_size, embedding_filters)(decoder_inputs)
-decoder_gru = LSTM(lstm_filters, return_sequences=True, return_state=False)
-decoder_outputs = decoder_gru(decoder_embedding, initial_state=encoder_states)
-decoder_dense = Dense(vocab_size, activation='softmax')
+decoder_inputs = Input(shape=(None,))
+decoder_embedding = Embedding(vocab_size, embedding_filters)
+decoder_input = decoder_embedding(decoder_inputs)
+decoder_lstm = LSTM(lstm_filters, return_sequences=True, return_state=True)
+decoder_outputs, _, _ = decoder_lstm(decoder_input, initial_state=encoder_states)
+decoder_dense = Dense(vocab_size, activation="softmax")
 decoder_outputs = decoder_dense(decoder_outputs)
 
-# Creates the model
-model = Model([encodoer_inputs, decoder_inputs], decoder_outputs)
-model.compile(optimizer='adam',loss='sparse_categorical_crossentropy')
+# Training the model
+model = Model([encoder_inputs,decoder_inputs], decoder_outputs)
+model.compile(
+    optimizer='adam',
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
 model.summary()
 
-# Shift the target sequence to create decoder outputs
-decoder_output_sequences = np.zeros_like(target_sequences)
-decoder_output_sequences[:,:-1] = target_sequences[:, 1:]
-
-# Reshape the data before training
-decoder_output_sequences = decoder_output_sequences[..., np.newaxis]
-
-# Train the model
 if train_model:
+    print('--------------------------------------')
+    print('|You are about to train a new model!.|')
+    print('--------------------------------------')
     model.fit(
-        [input_sequences, target_sequences],
-        decoder_output_sequences,
-        batch_size = model_batch_size,
-        epochs = model_epochs,
-        validation_split = 0.2
-    )
-    save_path = ROOT_DIR / "Pretrained models/model.keras"
+    x=[tokenized_inputs,tokenized_outputs],
+    y=tokenized_tdata,
+    batch_size = bsize,
+    epochs = epochs
+)
     model.save(save_path)
+    print('Your model has been saved to:')
+    print(f'{save_path}')
 else:
-    print('------------------------------')
-    print('Skipped training a new model!.')
-    print('------------------------------')
+    print('--------------------------------')
+    print('|Skipped training a new model!.|')
+    print('--------------------------------')
+    model = load_model(save_path)
